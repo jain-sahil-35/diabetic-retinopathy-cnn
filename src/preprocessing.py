@@ -1,5 +1,8 @@
 from pathlib import Path
 
+import numpy as np
+import torch
+
 import matplotlib
 matplotlib.use("Agg")
 
@@ -52,36 +55,69 @@ def preprocess_image(image_path):
 
     return canvas
 
-# 4. Test preprocessing on one image
-sample_path = sorted(TRAIN_IMG_DIR.glob("*.jpg"))[0]
+def image_to_tensor(image):
 
-original = Image.open(sample_path).convert("RGB")
-processed = preprocess_image(sample_path)
+    # Convert Pillow image to NumPy array
+    array = np.array(image)
 
-print("Original dimensions:", original.size)
-print("Processed dimensions:", processed.size)
+    # Convert NumPy array to PyTorch tensor
+    tensor = torch.from_numpy(array)
 
-# 5. Compare original and processed images
-fig, axes = plt.subplots(1, 2, figsize=(12, 6))
+    # Rearrange dimensions: HWC -> CHW
+    tensor = tensor.permute(2, 0, 1)
 
-axes[0].imshow(original)
-axes[0].set_title("Original Image")
+    # Convert integer values to floating point
+    tensor = tensor.float()
 
-axes[1].imshow(processed)
-axes[1].set_title("Preprocessed Image (512 x 512)")
+    # Normalize pixel values from [0, 255] to [0, 1]
+    tensor = tensor / 255.0
 
-for ax in axes:
-    ax.axis("off")
+    return tensor
 
-plt.tight_layout()
+if __name__ == "__main__":
 
-plt.savefig(
-    RESULTS_DIR / "preprocessing_comparison.png",
-    dpi=200
-)
+    # 4. Test preprocessing on one image
+    sample_path = sorted(TRAIN_IMG_DIR.glob("*.jpg"))[0]
 
-plt.close()
+    original = Image.open(sample_path).convert("RGB")
+    processed = preprocess_image(sample_path)
 
-print("\nPreprocessing test completed!")
-print("Saved comparison to:", RESULTS_DIR)
+    print("Original dimensions:", original.size)
+    print("Processed dimensions:", processed.size)
 
+    # 5. Compare original and processed images
+    fig, axes = plt.subplots(1, 2, figsize=(12, 6))
+
+    axes[0].imshow(original)
+    axes[0].set_title("Original Image")
+
+    axes[1].imshow(processed)
+    axes[1].set_title("Preprocessed Image (512 x 512)")
+
+    for ax in axes:
+        ax.axis("off")
+
+    plt.tight_layout()
+
+    plt.savefig(
+        RESULTS_DIR / "preprocessing_comparison.png",
+        dpi=200
+    )
+
+    plt.close()
+
+    print("\nPreprocessing test completed!")
+    print("Saved comparison to:", RESULTS_DIR)
+
+    # Test tensor conversion
+
+    tensor = image_to_tensor(processed)
+
+    print("\n========== TENSOR INFORMATION ==========")
+
+    print("Tensor type:", type(tensor))
+    print("Tensor shape:", tensor.shape)
+    print("Tensor dtype:", tensor.dtype)
+
+    print("Minimum pixel value:", tensor.min().item())
+    print("Maximum pixel value:", tensor.max().item())
