@@ -1,3 +1,5 @@
+import csv
+import time
 import random
 from pathlib import Path
 
@@ -6,7 +8,11 @@ import torch
 import torch.nn as nn
 
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import classification_report, confusion_matrix, f1_score
+from sklearn.metrics import (
+    classification_report,
+    confusion_matrix,
+    f1_score,
+)
 
 from torch.utils.data import DataLoader, Subset
 
@@ -15,10 +21,25 @@ from model import BaselineCNN
 
 
 # --------------------------------------------------
-# 1. Reproducibility
+# 1. Experiment configuration
 # --------------------------------------------------
 
+EXPERIMENT_ID = "BASELINE"
+
 SEED = 42
+BATCH_SIZE = 16
+EPOCHS = 20
+LEARNING_RATE = 0.001
+OPTIMIZER_NAME = "Adam"
+WEIGHT_DECAY = 0.0
+
+# Metadata only: preprocessing currently uses 512 x 512.
+IMAGE_SIZE = 512
+
+
+# --------------------------------------------------
+# 2. Reproducibility
+# --------------------------------------------------
 
 random.seed(SEED)
 np.random.seed(SEED)
@@ -27,16 +48,24 @@ torch.manual_seed(SEED)
 if torch.cuda.is_available():
     torch.cuda.manual_seed_all(SEED)
 
+# Reproducible DataLoader shuffling
+loader_generator = torch.Generator()
+loader_generator.manual_seed(SEED)
+
 
 # --------------------------------------------------
-# 2. Paths
+# 3. Paths
 # --------------------------------------------------
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 DATA_DIR = PROJECT_ROOT / "dataset" / "B. Disease Grading"
 
-TRAIN_IMG_DIR = DATA_DIR / "1. Original Images" / "a. Training Set"
+TRAIN_IMG_DIR = (
+    DATA_DIR
+    / "1. Original Images"
+    / "a. Training Set"
+)
 
 TRAIN_CSV = (
     DATA_DIR
@@ -47,21 +76,49 @@ TRAIN_CSV = (
 RESULTS_DIR = PROJECT_ROOT / "results"
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
+# CSV tracking files
+EXPERIMENT_CSV = RESULTS_DIR / "experiment_results.csv"
+HISTORY_CSV = RESULTS_DIR / "epoch_history.csv"
+
+# Unique checkpoint for every experiment
+CHECKPOINT_PATH = (
+    RESULTS_DIR / f"{EXPERIMENT_ID.lower()}_best.pth"
+)
+
 
 # --------------------------------------------------
-# 3. Training settings
+# 4. CSV helper function
 # --------------------------------------------------
 
-BATCH_SIZE = 16
-EPOCHS = 20
-LEARNING_RATE = 0.001
+def append_to_csv(file_path, fieldnames, row):
+
+    file_exists = file_path.exists()
+
+    with open(
+        file_path,
+        "a",
+        newline="",
+        encoding="utf-8",
+    ) as file:
+
+        writer = csv.DictWriter(
+            file,
+            fieldnames=fieldnames,
+        )
+
+        if not file_exists:
+            writer.writeheader()
+
+        writer.writerow(row)
 
 
 # --------------------------------------------------
-# 4. Device selection
+# 5. Device selection
 # --------------------------------------------------
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+device = torch.device(
+    "cuda" if torch.cuda.is_available() else "cpu"
+)
 
 print("Device:", device)
 
@@ -70,12 +127,17 @@ if device.type == "cuda":
 
 
 # --------------------------------------------------
-# 5. Load dataset and split it
+# 6. Load dataset and split it
 # --------------------------------------------------
 
-full_dataset = RetinopathyDataset(TRAIN_CSV, TRAIN_IMG_DIR)
+full_dataset = RetinopathyDataset(
+    TRAIN_CSV,
+    TRAIN_IMG_DIR,
+)
 
-all_labels = full_dataset.data["Retinopathy grade"].to_numpy()
+all_labels = full_dataset.data[
+    "Retinopathy grade"
+].to_numpy()
 
 train_indices, val_indices = train_test_split(
     np.arange(len(full_dataset)),
@@ -84,12 +146,23 @@ train_indices, val_indices = train_test_split(
     stratify=all_labels,
 )
 
-train_dataset = Subset(full_dataset, train_indices)
-val_dataset = Subset(full_dataset, val_indices)
+train_dataset = Subset(
+    full_dataset,
+    train_indices,
+)
+
+val_dataset = Subset(
+    full_dataset,
+    val_indices,
+)
+
+print("Total images:", len(full_dataset))
+print("Training images:", len(train_dataset))
+print("Validation images:", len(val_dataset))
 
 
 # --------------------------------------------------
-# 6. Create DataLoaders
+# 7. Create DataLoaders
 # --------------------------------------------------
 
 train_loader = DataLoader(
@@ -98,6 +171,7 @@ train_loader = DataLoader(
     shuffle=True,
     num_workers=0,
     pin_memory=torch.cuda.is_available(),
+    generator=loader_generator,
 )
 
 val_loader = DataLoader(
@@ -108,28 +182,59 @@ val_loader = DataLoader(
     pin_memory=torch.cuda.is_available(),
 )
 
-print("Training images:", len(train_dataset))
-print("Validation images:", len(val_dataset))
-
 
 # --------------------------------------------------
-# 7. Initialize model, loss and optimizer
+# 8. Initialize model, loss and optimizer
 # --------------------------------------------------
 
 model = BaselineCNN(num_classes=5).to(device)
 
 criterion = nn.CrossEntropyLoss()
 
-optimizer = torch.optim.Adam(
-    model.parameters(),
-    lr=LEARNING_RATE,
-)
+if OPTIMIZER_NAME == "Adam":
 
-best_val_macro_f1 = 0.0
+    optimizer = torch.optim.Adam(
+        model.parameters(),
+        lr=LEARNING_RATE,
+        weight_decay=WEIGHT_DECAY,
+    )
+
+elif OPTIMIZER_NAME == "AdamW":
+
+    optimizer = torch.optim.AdamW(
+        model.parameters(),
+        lr=LEARNING_RATE,
+        weight_decay=WEIGHT_DECAY,
+    )
+
+elif OPTIMIZER_NAME == "SGD":
+
+    optimizer = torch.optim.SGD(
+        model.parameters(),
+        lr=LEARNING_RATE,
+        momentum=0.9,
+        weight_decay=WEIGHT_DECAY,
+    )
+
+else:
+    raise ValueError(
+        f"Unsupported optimizer: {OPTIMIZER_NAME}"
+    )
 
 
 # --------------------------------------------------
-# 8. Training loop
+# 9. Initialize experiment tracking
+# --------------------------------------------------
+
+best_val_macro_f1 = -1.0
+best_val_accuracy = 0.0
+best_epoch = 0
+
+start_time = time.time()
+
+
+# --------------------------------------------------
+# 10. Training loop
 # --------------------------------------------------
 
 for epoch in range(EPOCHS):
@@ -143,8 +248,15 @@ for epoch in range(EPOCHS):
     # Training batches
     for images, labels in train_loader:
 
-        images = images.to(device, non_blocking=True)
-        labels = labels.to(device, non_blocking=True)
+        images = images.to(
+            device,
+            non_blocking=True,
+        )
+
+        labels = labels.to(
+            device,
+            non_blocking=True,
+        )
 
         optimizer.zero_grad()
 
@@ -154,10 +266,14 @@ for epoch in range(EPOCHS):
         loss.backward()
         optimizer.step()
 
-        train_loss_sum += loss.item() * labels.size(0)
+        train_loss_sum += (
+            loss.item() * labels.size(0)
+        )
 
         train_correct += (
-            (outputs.argmax(dim=1) == labels).sum().item()
+            (outputs.argmax(dim=1) == labels)
+            .sum()
+            .item()
         )
 
         train_total += labels.size(0)
@@ -167,7 +283,7 @@ for epoch in range(EPOCHS):
 
 
     # --------------------------------------------------
-    # 9. Validation
+    # 11. Validation
     # --------------------------------------------------
 
     model.eval()
@@ -183,22 +299,35 @@ for epoch in range(EPOCHS):
 
         for images, labels in val_loader:
 
-            images = images.to(device, non_blocking=True)
-            labels = labels.to(device, non_blocking=True)
+            images = images.to(
+                device,
+                non_blocking=True,
+            )
+
+            labels = labels.to(
+                device,
+                non_blocking=True,
+            )
 
             outputs = model(images)
             loss = criterion(outputs, labels)
 
-            val_loss_sum += loss.item() * labels.size(0)
+            val_loss_sum += (
+                loss.item() * labels.size(0)
+            )
+
+            predictions = outputs.argmax(dim=1)
 
             val_correct += (
-                (outputs.argmax(dim=1) == labels).sum().item()
+                (predictions == labels)
+                .sum()
+                .item()
             )
 
             val_total += labels.size(0)
 
             all_predictions.extend(
-                outputs.argmax(dim=1).cpu().tolist()
+                predictions.cpu().tolist()
             )
 
             all_targets.extend(
@@ -223,7 +352,28 @@ for epoch in range(EPOCHS):
 
 
     # --------------------------------------------------
-    # 10. Print epoch results
+    # 12. Save epoch history to CSV
+    # --------------------------------------------------
+
+    epoch_row = {
+        "experiment_id": EXPERIMENT_ID,
+        "epoch": epoch + 1,
+        "train_loss": train_loss,
+        "train_accuracy": train_accuracy,
+        "val_loss": val_loss,
+        "val_accuracy": val_accuracy,
+        "val_macro_f1": val_macro_f1,
+    }
+
+    append_to_csv(
+        HISTORY_CSV,
+        list(epoch_row.keys()),
+        epoch_row,
+    )
+
+
+    # --------------------------------------------------
+    # 13. Print epoch results
     # --------------------------------------------------
 
     print(
@@ -258,15 +408,18 @@ for epoch in range(EPOCHS):
 
 
     # --------------------------------------------------
-    # 11. Save best model checkpoint
+    # 14. Save best model checkpoint
     # --------------------------------------------------
 
     if val_macro_f1 > best_val_macro_f1:
 
         best_val_macro_f1 = val_macro_f1
+        best_val_accuracy = val_accuracy
+        best_epoch = epoch + 1
 
         torch.save(
             {
+                "experiment_id": EXPERIMENT_ID,
                 "epoch": epoch + 1,
                 "model_state_dict": model.state_dict(),
                 "optimizer_state_dict": optimizer.state_dict(),
@@ -274,20 +427,52 @@ for epoch in range(EPOCHS):
                 "val_macro_f1": val_macro_f1,
                 "seed": SEED,
             },
-            RESULTS_DIR / "baseline_cnn_best.pth",
+            CHECKPOINT_PATH,
         )
 
+        print("Best model checkpoint updated!")
+
 
 # --------------------------------------------------
-# 12. Training summary
+# 15. Training summary
 # --------------------------------------------------
+
+training_time = time.time() - start_time
 
 print("\nTraining completed!")
 
+print(f"Best epoch: {best_epoch}")
+print(f"Best validation accuracy: {best_val_accuracy:.4f}")
 print(f"Best validation Macro F1: {best_val_macro_f1:.4f}")
 
-print(
-    "Best checkpoint:",
-    RESULTS_DIR / "baseline_cnn_best.pth",
+print("Best checkpoint:", CHECKPOINT_PATH)
+
+
+# --------------------------------------------------
+# 16. Save experiment summary to CSV
+# --------------------------------------------------
+
+experiment_row = {
+    "experiment_id": EXPERIMENT_ID,
+    "learning_rate": LEARNING_RATE,
+    "batch_size": BATCH_SIZE,
+    "optimizer": OPTIMIZER_NAME,
+    "weight_decay": WEIGHT_DECAY,
+    "image_size": IMAGE_SIZE,
+    "epochs": EPOCHS,
+    "best_epoch": best_epoch,
+    "best_val_accuracy": best_val_accuracy,
+    "best_val_macro_f1": best_val_macro_f1,
+    "training_time_seconds": round(training_time, 2),
+    "seed": SEED,
+}
+
+append_to_csv(
+    EXPERIMENT_CSV,
+    list(experiment_row.keys()),
+    experiment_row,
 )
 
+print("\nExperiment recorded successfully!")
+print("Experiment CSV:", EXPERIMENT_CSV)
+print("Epoch history CSV:", HISTORY_CSV)
