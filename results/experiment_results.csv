@@ -1,0 +1,2 @@
+experiment_id,learning_rate,batch_size,optimizer,weight_decay,image_size,epochs,best_epoch,best_val_accuracy,best_val_macro_f1,training_time_seconds,seed
+BASELINE,0.001,16,Adam,0.0,512,20,15,0.4939759036144578,0.23991397849462368,2064.51,42
