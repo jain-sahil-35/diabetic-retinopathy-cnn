@@ -24,7 +24,8 @@ from model import BaselineCNN
 # 1. Experiment configuration
 # --------------------------------------------------
 
-EXPERIMENT_ID = "BASELINE"
+EXPERIMENT_ID = "CLASS_WEIGHTED"
+USE_CLASS_WEIGHTS = True
 
 SEED = 42
 BATCH_SIZE = 16
@@ -156,6 +157,26 @@ val_dataset = Subset(
     val_indices,
 )
 
+# Calculate class weights using training data only
+train_labels = all_labels[train_indices]
+
+class_counts = np.bincount(
+    train_labels,
+    minlength=5,
+)
+
+class_weights = len(train_labels) / (
+    5 * class_counts
+)
+
+class_weights = torch.tensor(
+    class_weights,
+    dtype=torch.float32,
+)
+
+print("\nTraining class counts:", class_counts)
+print("Class weights:", class_weights)
+
 print("Total images:", len(full_dataset))
 print("Training images:", len(train_dataset))
 print("Validation images:", len(val_dataset))
@@ -189,7 +210,12 @@ val_loader = DataLoader(
 
 model = BaselineCNN(num_classes=5).to(device)
 
-criterion = nn.CrossEntropyLoss()
+if USE_CLASS_WEIGHTS:
+    criterion = nn.CrossEntropyLoss(
+        weight=class_weights.to(device)
+    )
+else:
+    criterion = nn.CrossEntropyLoss()
 
 if OPTIMIZER_NAME == "Adam":
 
@@ -218,7 +244,7 @@ elif OPTIMIZER_NAME == "SGD":
 
 else:
     raise ValueError(
-        f"Unsupported optimizer: {OPTIMIZER_NAME}"
+        f"Unsupported optimizer: {OPTMIIZER_NAMi}"
     )
 
 
@@ -350,13 +376,13 @@ for epoch in range(EPOCHS):
         labels=[0, 1, 2, 3, 4],
     )
 
-
     # --------------------------------------------------
     # 12. Save epoch history to CSV
     # --------------------------------------------------
 
     epoch_row = {
         "experiment_id": EXPERIMENT_ID,
+        "class_weighting": USE_CLASS_WEIGHTS,
         "epoch": epoch + 1,
         "train_loss": train_loss,
         "train_accuracy": train_accuracy,
@@ -370,7 +396,6 @@ for epoch in range(EPOCHS):
         list(epoch_row.keys()),
         epoch_row,
     )
-
 
     # --------------------------------------------------
     # 13. Print epoch results

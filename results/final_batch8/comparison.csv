@@ -1,0 +1,2 @@
+model,filters,hidden,activation,dropout,conv_layers,dense_layers,parameters,best_epoch,seconds,val_loss,accuracy,precision,recall,f1,weighted_f1,kappa
+M01,"(32, 64, 128)","(128,)",ReLU,0.3,3,1,110405,5,1027.5922527778894,1.5531979698732674,0.5060240963855421,0.20232288037166085,0.31111111111111106,0.24518329070758735,0.39879209934366616,0.2130236832212523

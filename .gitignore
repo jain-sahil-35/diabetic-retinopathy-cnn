@@ -22,3 +22,19 @@ __pycache__/
 # Temporary files
 *.log
 .DS_Store
+
+# Accidental command files
+/--*
+
+# Project backup
+/DR_Final_Project.zip
+
+# Preliminary experiments
+/results/trial/
+/results/quick_analysis/
+/results/comparative_analysis/
+
+# Discontinued transfer learning
+/src/advanced_preprocessing.py
+/src/transfer_learning.py
+/results/final_transfer_learning/
